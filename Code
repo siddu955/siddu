@@ -1,0 +1,205 @@
+/* line following robot code uses pid made for 8 array qtr sensor CAUTION: Works only upon fine tuining and adjusting correct sensor weights */
+#ifndef cbi
+#define cbi(sfr, bit) (_SFR_BYTE(sfr) &= ~_BV(bit))
+#endif
+#ifndef sbi
+#define sbi(sfr, bit) (_SFR_BYTE(sfr) |= _BV(bit))
+#endif
+
+//--------Motor Pins ----
+#define PWMA 9
+#define AIN2 8
+#define AIN1 7
+#define STBY 6
+#define BIN1 5
+#define BIN2 4
+#define PWMB 3
+
+
+//--------Line sensor settings--------- chnge 1 to 0 if our arena has white path over black background 1 for black track 0 for white track
+bool isBlackLine = 1;
+const int numSensors = 8;
+int sensorWeight[8] = { 8, 4, 2, 1, -1, -2, -4, -8 };//adjust sensors in order to adjust sensitivity of particular set of sensors
+//------------------------------------
+
+int minValues[8], maxValues[8], threshold[8], sensorValue[8], sensorArray[8];
+int onLine = 1;
+double error;
+int P, I, D, previousError;
+int PIDvalue;
+float Kp = 0.04;
+float Kd = 0.25;// Adjust Kp Kd Ki value differs for each bot
+float Ki = 0;
+
+int lfSpeed = 150;     
+int currentSpeed = 50;  
+int lsp, rsp;
+
+//--------Button Pins--------
+#define CALIB_BUTTON 11
+#define START_BUTTON 12
+
+//--------Debounce helper--------
+void waitForButton(int pin) {
+  while (digitalRead(pin) == HIGH) { }
+  delay(50);
+  while (digitalRead(pin) == LOW) { }
+  delay(50);
+}
+
+void setup() {
+  Serial.begin(9600);
+
+  // Motor pins
+  pinMode(AIN1, OUTPUT);
+  pinMode(AIN2, OUTPUT);
+  pinMode(BIN1, OUTPUT);
+  pinMode(BIN2, OUTPUT);
+  pinMode(PWMA, OUTPUT);
+  pinMode(PWMB, OUTPUT);
+  pinMode(STBY, OUTPUT);
+  digitalWrite(STBY, HIGH); // Enable motor driver
+
+  // Buttons
+  pinMode(CALIB_BUTTON, INPUT_PULLUP);
+  pinMode(START_BUTTON, INPUT_PULLUP);
+
+  pinMode(13, OUTPUT); // LED
+
+  sbi(ADCSRA, ADPS2);
+  cbi(ADCSRA, ADPS1);
+  cbi(ADCSRA, ADPS0);
+}
+
+void loop() {
+  waitForButton(CALIB_BUTTON);
+  Serial.println("Calibration started");
+  calibrate();
+  Serial.println("Calibration completed");
+
+  waitForButton(START_BUTTON);
+  Serial.println("Starting line follow");
+
+  while (1) {
+    readLine();
+
+    if (currentSpeed < lfSpeed) currentSpeed += 2;
+
+    if (onLine == 1) {
+      linefollow();
+      digitalWrite(13, HIGH);
+    } else {
+      digitalWrite(13, LOW);
+      if (error < 1000) {
+        motor1run(0);
+        motor2run(currentSpeed);
+      } else if (error > -1000) {
+        motor1run(currentSpeed);
+        motor2run(0);
+      }
+    }
+  }
+}
+
+void linefollow() {
+  error = 0;
+  int activeSensors = 0;
+
+  for (int i = 0; i < 8; i++) {
+    error += sensorWeight[i] * sensorArray[i] * sensorValue[i];
+    activeSensors += sensorArray[i];
+  }
+  error = error / activeSensors;
+
+  P = error;
+  I += error;
+  D = error - previousError;
+
+  PIDvalue = (Kp * P) + (Ki * I) + (Kd * D);
+  previousError = error;
+
+  lsp = currentSpeed - PIDvalue;
+  rsp = currentSpeed + PIDvalue;
+
+  lsp = constrain(lsp, 0, 255);
+  rsp = constrain(rsp, 0, 255);
+
+  motor1run(rsp);
+  motor2run(lsp);
+}
+
+void calibrate() {
+  for (int i = 0; i < 8; i++) {
+    minValues[i] = analogRead(i);
+    maxValues[i] = analogRead(i);
+  }
+
+  for (int t = 0; t < 10000; t++) {
+    motor1run(70);
+    motor2run(-70);
+    for (int i = 0; i < 8; i++) {
+      int val = analogRead(i);
+      if (val < minValues[i]) minValues[i] = val;
+      if (val > maxValues[i]) maxValues[i] = val;
+    }
+  }
+
+  for (int i = 0; i < 8; i++) {
+    threshold[i] = (minValues[i] + maxValues[i]) / 2;
+    Serial.print(threshold[i]);
+    Serial.print(" ");
+  }
+  Serial.println();
+
+  motor1run(0);
+  motor2run(0);
+}
+
+void readLine() {
+  onLine = 0;
+  for (int i = 0; i < 8; i++) {
+    if (isBlackLine) {
+      sensorValue[i] = map(analogRead(i), minValues[i], maxValues[i], 0, 1000);
+    } else {
+      sensorValue[i] = map(analogRead(i), minValues[i], maxValues[i], 1000, 0);
+    }
+    sensorValue[i] = constrain(sensorValue[i], 0, 1000);
+    sensorArray[i] = sensorValue[i] > 500;
+
+    if (sensorArray[i]) onLine = 1;
+  }
+}
+
+void motor1run(int motorSpeed) {
+  motorSpeed = constrain(motorSpeed, -255, 255);
+  if (motorSpeed > 0) {
+    digitalWrite(AIN1, HIGH);
+    digitalWrite(AIN2, LOW);
+    analogWrite(PWMA, motorSpeed);
+  } else if (motorSpeed < 0) {
+    digitalWrite(AIN1, LOW);
+    digitalWrite(AIN2, HIGH);
+    analogWrite(PWMA, abs(motorSpeed));
+  } else {
+    digitalWrite(AIN1, HIGH);
+    digitalWrite(AIN2, HIGH);
+    analogWrite(PWMA, 0);
+  }
+}
+
+void motor2run(int motorSpeed) {
+  motorSpeed = constrain(motorSpeed, -255, 255);
+  if (motorSpeed > 0) {
+    digitalWrite(BIN1, HIGH);
+    digitalWrite(BIN2, LOW);
+    analogWrite(PWMB, motorSpeed);
+  } else if (motorSpeed < 0) {
+    digitalWrite(BIN1, LOW);
+    digitalWrite(BIN2, HIGH);
+    analogWrite(PWMB, abs(motorSpeed));
+  } else {
+    digitalWrite(BIN1, HIGH);
+    digitalWrite(BIN2, HIGH);
+    analogWrite(PWMB, 0);
+  }
+}
