@@ -1,3 +1,10 @@
+<img width="1920" height="1080" alt="Screenshot (106)" src="https://github.com/user-attachments/assets/21944fc9-b58e-4505-849b-3b486d26978e" />
+
+
+
+
+
+
 # siddu
 NOTE: PCB Design , Code , Circuit diagram also provided 
 
